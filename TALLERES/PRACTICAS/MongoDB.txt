@@ -1,0 +1,80 @@
+setwd("C:/borrar/")
+TH<- read.csv("INMOVILIZA.csv",header = TRUE, sep = ",", encoding = "UTF-8")
+install.packages(c("sqldf","lubridate","dplyr","rvest","mongolite"))
+library(sqldf)
+library(lubridate)
+library(dplyr)
+
+library(rvest)
+
+w <- "https://www.okatwork.co/listado-infracciones-de-transito-colombia-resolucion-3027-de-2010.html"
+DATOS <- read_html(w)
+DATOS <- html_nodes(DATOS, "table")
+
+ExtraerCategoria <-function(Datos,Cual){
+  # Ensure DM_CATEGORIA is defined and exists in the global environment
+  if (!exists("DM_CATEGORIA")) {
+    DM_CATEGORIA <- data.frame()
+  }
+  # Extract and process the table from DATOS using the specified Cual
+  II <- data.frame(html_table(DATOS[[Cual]], fill = TRUE))
+  # Update DM_CATEGORIA with the first row and first two columns of II
+  DM_CATEGORIA <<- rbind(DM_CATEGORIA, II[1, c(1, 2)])
+  return(DM_CATEGORIA)
+}
+
+DM_CATEGORIA<-data.frame()
+for (i in 1:9){
+  DM_CATEGORIA<-ExtraerCategoria(DATOS,i)
+}
+colnames(DM_CATEGORIA)[1]<-"CODIGO"
+colnames(DM_CATEGORIA)[2]<-"DESCRIPCION"
+
+ExtraerTabla <- function(DATOS, Cual) {
+  # Extract and process the table from DATOS using the specified Cual
+  II <- data.frame(html_table(DATOS[[Cual]], fill = TRUE))
+  II$X2<-toupper(II$X2)
+  # Remove unwanted columns and the first row from II
+  II <- II[, -c(3:5)]
+  II <- II[-1, ]
+  # Rename columns in II
+  colnames(II) <- c('CODIGO', 'DESCRIPCION')
+  # Add the INMOV column based on the presence of 'INMOVILIZACIÓN: SI' in DESCRIPCION
+  II$INMOV <- ifelse(grepl('INMOVILIZACIÓN: SI', II$DESCRIPCION),
+                     'SI', 'NO')
+  # Return the processed data frame
+  return(II)
+}
+
+ExtraerTodo <- function(DATOS, Cual) {
+  CATE<-data.frame()
+  for (i in (1:Cual)) {
+    
+    ii<-ExtraerTabla(DATOS,i)
+    if(i>1){
+      ii <- ii[-1, ]
+    }
+    CATE<-rbind(CATE,ii)
+  }
+  CATE<-CATE[-1,]
+  return(CATE)
+}
+DM_INFRACCIONES<-ExtraerTodo(DATOS,9)
+installed.packages("mongolite")
+library(mongolite)
+
+dataframes <- list(DM_CATEGORIA,DM_INFRACCIONES,TH)
+collections <- list("DM_CATEGORIA","DM_INFRACCION","TH")
+
+cargar<- function(nombres,tablas){
+  x<- seq(1:length(tablas))
+  for (i in x) {
+    CON<-mongo(collection = nombres[[i]],db= "Analitica" ,url = "mongodb://localhost:27017/") 
+    CON$insert(tablas[[i]])
+    
+  }
+}
+
+cargar(collections,dataframes)
+
+CON$disconnect()
